@@ -157,6 +157,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           gh release create "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
             release-artifacts/ffmpeg-webmiere-windows-x64-runtime.zip \
             release-artifacts/ffmpeg-webmiere-windows-x64-dev.zip \
             release-artifacts/SHA256SUMS.txt \
