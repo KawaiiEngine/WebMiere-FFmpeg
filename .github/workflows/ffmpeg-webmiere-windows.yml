@@ -1,0 +1,164 @@
+name: Build FFmpeg WebMiere Windows x64
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    tags:
+      - "ffmpeg-webmiere-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffmpeg-webmiere-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64-msvc:
+    name: Windows x64 MSVC shared LGPL build
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout packaging scripts
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up MSYS2 build tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MSYS
+          update: true
+          install: >-
+            base-devel
+            diffutils
+            git
+            gzip
+            make
+            mingw-w64-x86_64-nasm
+            patch
+            pkgconf
+            tar
+            unzip
+            zip
+
+      - name: Locate MSYS2 root
+        shell: msys2 {0}
+        run: echo "MSYS2_ROOT_WIN=$(cygpath -w /)" >> "$GITHUB_ENV"
+
+      - name: Build, verify, and package FFmpeg
+        run: ./.github/scripts/build-ffmpeg-webmiere.ps1
+
+      - name: Upload runtime package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-runtime
+          path: artifacts/ffmpeg-webmiere-windows-x64-runtime.zip
+          if-no-files-found: error
+
+      - name: Upload development package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-dev
+          path: artifacts/ffmpeg-webmiere-windows-x64-dev.zip
+          if-no-files-found: error
+
+      - name: Upload ZIP checksum manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-sha256sums
+          path: artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+
+  attest-artifacts:
+    name: Attest build artifacts
+    needs: build-windows-x64-msvc
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download runtime package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-runtime
+          path: artifacts
+
+      - name: Download development package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-dev
+          path: artifacts
+
+      - name: Download ZIP checksum manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-sha256sums
+          path: artifacts
+
+      - name: Attest runtime package
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: artifacts/ffmpeg-webmiere-windows-x64-runtime.zip
+
+      - name: Attest development package
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: artifacts/ffmpeg-webmiere-windows-x64-dev.zip
+
+      - name: Attest ZIP checksum manifest
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: artifacts/SHA256SUMS.txt
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - build-windows-x64-msvc
+      - attest-artifacts
+    if: startsWith(github.ref, 'refs/tags/ffmpeg-webmiere-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download runtime package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-runtime
+          path: release-artifacts
+
+      - name: Download development package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-dev
+          path: release-artifacts
+
+      - name: Download ZIP checksum manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ffmpeg-webmiere-windows-x64-sha256sums
+          path: release-artifacts
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            release-artifacts/ffmpeg-webmiere-windows-x64-runtime.zip \
+            release-artifacts/ffmpeg-webmiere-windows-x64-dev.zip \
+            release-artifacts/SHA256SUMS.txt \
+            --title "$RELEASE_TAG" \
+            --notes "FFmpeg libraries built by KawaiiEngine for WebMiere - licensed under LGPL v3 or later."
