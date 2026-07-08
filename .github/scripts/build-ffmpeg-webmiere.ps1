@@ -463,11 +463,13 @@ function Invoke-RuntimeProbe {
         "--disable-nonfree",
         "--enable-shared",
         "--disable-static",
+        "--enable-decoder=av1",
         "--enable-decoder=vp9",
         "--enable-decoder=opus",
         "--enable-demuxer=matroska",
         "--enable-protocol=file",
         "--enable-nvdec",
+        "--enable-hwaccel=av1_nvdec",
         "--enable-hwaccel=vp9_nvdec"
     )) {
         Assert-ContainsProbeText -ProbeText $probeText -Pattern ([regex]::Escape($flag)) -Description "runtime configuration contains $flag"
@@ -643,10 +645,13 @@ $ConfigureArgs = @(
     "--enable-swresample",
     "--enable-demuxer=matroska",
     "--enable-protocol=file",
+    "--enable-decoder=av1",
     "--enable-decoder=vp9",
     "--enable-decoder=opus",
+    "--enable-parser=av1",
     "--enable-parser=vp9",
     "--enable-parser=opus",
+    "--enable-hwaccel=av1_nvdec",
     "--enable-hwaccel=vp9_nvdec"
 )
 
@@ -731,10 +736,13 @@ Assert-HeaderDefine $configHeader "CONFIG_NVDEC" 1
 
 Assert-HeaderDefine $componentHeader "CONFIG_MATROSKA_DEMUXER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_FILE_PROTOCOL" 1
+Assert-HeaderDefine $componentHeader "CONFIG_AV1_DECODER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_VP9_DECODER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_OPUS_DECODER" 1
+Assert-HeaderDefine $componentHeader "CONFIG_AV1_PARSER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_VP9_PARSER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_OPUS_PARSER" 1
+Assert-HeaderDefine $componentHeader "CONFIG_AV1_NVDEC_HWACCEL" 1
 Assert-HeaderDefine $componentHeader "CONFIG_VP9_NVDEC_HWACCEL" 1
 Assert-HeaderDefine $componentHeader "CONFIG_BILATERAL_CUDA_FILTER" 0
 Assert-HeaderDefine $componentHeader "CONFIG_BWDIF_CUDA_FILTER" 0
