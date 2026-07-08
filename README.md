@@ -21,7 +21,9 @@ The FFmpeg configuration is LGPL v3-or-later oriented:
 - `--disable-static`
 - `--extra-version=kawaiiengine-webmiere`
 
-The build disables programs, documentation, networking, avdevice, and avfilter, and enables only the WebMiere-required demuxer, protocol, decoders, parsers, libraries, and VP9 NVDEC support.
+The build disables programs, documentation, networking, avdevice, and avfilter, and enables only the WebMiere-required demuxer, protocol, decoders, parsers, libraries, and VP9/AV1 NVDEC support.
+
+The enabled WebMiere video decode components include VP9 and AV1 decoders, VP9 and AV1 parsers, and NVIDIA NVDEC hardware acceleration for VP9 and AV1.
 
 ## Run The Workflow
 
@@ -79,7 +81,7 @@ Each package includes generated compliance and verification files:
 
 `ffmpeg-changes.diff` is generated and must be empty. The workflow fails if the checked-out FFmpeg source differs from the pinned commit.
 
-`ffmpeg-runtime-probe.txt` is produced by a small MSVC-built probe that links the generated headers/import library and calls the freshly built FFmpeg DLLs for version, license, and configuration checks.
+`ffmpeg-runtime-probe.txt` is produced by a small MSVC-built probe that links the generated headers/import library and calls the freshly built FFmpeg DLLs for version, license, configuration, and required WebMiere component checks, including VP9/AV1 decoder, parser, and NVDEC availability.
 
 Verify package checksums from the extracted package root with:
 
