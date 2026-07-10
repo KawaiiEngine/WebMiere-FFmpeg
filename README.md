@@ -10,7 +10,7 @@ The build runs on GitHub Actions with a GitHub-hosted `windows-2022` runner. It 
 
 The workflow builds FFmpeg 8.1.2 from tag `n8.1.2`, resolved to commit `38b88335f99e76ed89ff3c93f877fdefce736c13`. It pins `nv-codec-headers` to commit `e844e5b26f46bb77479f063029595293aa8f812d`.
 
-The planned dav1d-enabled build also builds dav1d 1.5.1 from pinned upstream commit `42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa`. dav1d is BSD 2-Clause licensed. Its static library is linked into the generated shared `avcodec-62.dll`; no separate `dav1d.dll` or `libdav1d.dll` is distributed.
+The build also builds dav1d 1.5.1 from pinned upstream commit `42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa`. dav1d is BSD 2-Clause licensed. Its static library is linked into the generated shared `avcodec-62.dll`; no separate `dav1d.dll` or `libdav1d.dll` is distributed.
 
 The source revisions and build metadata are pinned and recorded for auditability. Identical output hashes are not guaranteed across GitHub runner-image, MSVC, or MSYS2 package updates.
 
@@ -23,7 +23,7 @@ The FFmpeg configuration remains LGPL v3-or-later oriented:
 - `--disable-static`
 - `--extra-version=kawaiiengine-webmiere`
 
-The dav1d-enabled migration must additionally record these options in the generated configure records:
+The build additionally records these options in the generated configure records:
 
 - `--pkg-config-flags=--static`
 - `--enable-libdav1d`
@@ -33,7 +33,7 @@ Here, `--disable-static` disables FFmpeg static-library outputs. It does not pre
 
 The build disables programs, documentation, networking, avdevice, and avfilter, and enables only the WebMiere-required demuxer, protocol, decoders, parsers, libraries, and VP9/AV1 NVDEC support.
 
-The planned dav1d-enabled WebMiere video decode components are distinct:
+The enabled WebMiere video decode components are:
 
 - FFmpeg's native VP9 software decoder
 - FFmpeg's native AV1 decoder, used with AV1 NVDEC
@@ -82,7 +82,7 @@ The development artifact contains matching FFmpeg headers, these MSVC import lib
 
 ## Verification Records
 
-For the dav1d-enabled build, each runtime and development package must include generated compliance and verification files:
+Each runtime and development package includes these generated compliance and verification files:
 
 - `FFmpeg-BUILD-INFO.txt`
 - `FFmpeg-SOURCE.txt`
