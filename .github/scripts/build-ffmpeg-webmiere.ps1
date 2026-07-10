@@ -11,6 +11,11 @@ $NvCodecHeadersTag = "n13.0.19.0"
 $NvCodecHeadersCommit = "e844e5b26f46bb77479f063029595293aa8f812d"
 $NvCodecHeadersRepository = "https://git.videolan.org/git/ffmpeg/nv-codec-headers.git"
 
+$Dav1dVersion = "1.5.1"
+$Dav1dTag = "1.5.1"
+$Dav1dCommit = "42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa"
+$Dav1dRepository = "https://code.videolan.org/videolan/dav1d.git"
+
 $PackageNotice = "FFmpeg libraries built by KawaiiEngine for WebMiere - licensed under LGPL v3 or later."
 $ExpectedLicense = "LGPL version 3 or later"
 $ExpectedDlls = @(
@@ -41,8 +46,12 @@ $ArtifactsRoot = Join-Path $RepoRoot "artifacts"
 
 $FfmpegSourceDir = Join-Path $SourceRoot "ffmpeg"
 $NvCodecHeadersSourceDir = Join-Path $SourceRoot "nv-codec-headers"
+$Dav1dSourceDir = Join-Path $SourceRoot "dav1d"
 $FfmpegBuildDir = Join-Path $BuildRoot "ffmpeg"
+$Dav1dBuildDir = Join-Path $BuildRoot "dav1d"
 $NvCodecHeadersPrefix = Join-Path $DepsRoot "ffnvcodec"
+$Dav1dPrefix = Join-Path $DepsRoot "dav1d"
+$Dav1dMesonNativeFile = Join-Path $BuildRoot "dav1d-msvc-native.ini"
 
 $RuntimePackageRoot = Join-Path $PackageRoot "runtime"
 $DevelopmentPackageRoot = Join-Path $PackageRoot "dev"
@@ -55,12 +64,15 @@ $RuntimeReportFile = Join-Path $ComplianceRoot "ffmpeg-runtime-report.txt"
 $RuntimeProbeFile = Join-Path $ComplianceRoot "ffmpeg-runtime-probe.txt"
 $LgplFile = Join-Path $ComplianceRoot "COPYING.LGPLv3"
 $GplFile = Join-Path $ComplianceRoot "COPYING.GPLv3"
+$Dav1dLicenseFile = Join-Path $ComplianceRoot "COPYING.dav1d"
 $SourceArchiveRoot = Join-Path $ComplianceRoot "source"
 $FfmpegSourceArchive = Join-Path $SourceArchiveRoot "ffmpeg-$FfmpegVersion-$FfmpegCommit.tar.gz"
 $NvCodecHeadersSourceArchive = Join-Path $SourceArchiveRoot "nv-codec-headers-$NvCodecHeadersCommit.tar.gz"
+$Dav1dSourceArchive = Join-Path $SourceArchiveRoot "dav1d-$Dav1dVersion-$Dav1dCommit.tar.gz"
 $ArtifactChecksumFile = Join-Path $ArtifactsRoot "SHA256SUMS.txt"
 $ProbeSourceFile = Join-Path $PSScriptRoot "ffmpeg-runtime-probe.c"
 $script:MsvcPathMsys = ""
+$script:MsvcToolPathMsys = ""
 
 function Write-Step {
     param([string] $Message)
@@ -129,8 +141,10 @@ function Quote-Bash {
 function Get-MsysCommand {
     param([string] $Command)
     $pathPrefix = "/usr/bin:/mingw64/bin"
-    if ($script:MsvcPathMsys) {
-        $pathPrefix = "$pathPrefix`:$script:MsvcPathMsys"
+    if ($script:MsvcToolPathMsys) {
+        $pathPrefix = "/mingw64/bin`:$script:MsvcToolPathMsys`:/usr/bin`:$script:MsvcPathMsys"
+    } elseif ($script:MsvcPathMsys) {
+        $pathPrefix = "/mingw64/bin`:$script:MsvcPathMsys`:/usr/bin"
     }
     return "export PATH=$(Quote-Bash $pathPrefix)`:`$PATH; " + $Command
 }
@@ -139,7 +153,7 @@ function Convert-ToMsysPath {
     param([string] $Path)
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $pathForBash = $fullPath.Replace("\", "/")
-    $converted = Get-NativeOutput -FilePath $script:BashPath -ArgumentList @("-c", (Get-MsysCommand "cygpath -u $(Quote-Bash $pathForBash)"))
+    $converted = Get-NativeOutput -FilePath $script:BashPath -ArgumentList @("-c", (Get-MsysCommand "/usr/bin/cygpath -u $(Quote-Bash $pathForBash)"))
     return $converted.Trim()
 }
 
@@ -194,13 +208,13 @@ function Find-MsysBash {
             continue
         }
 
-        $probe = & $candidate -lc 'command -v git >/dev/null && command -v make >/dev/null && command -v pkg-config >/dev/null && (command -v nasm >/dev/null || test -x /mingw64/bin/nasm.exe)' 2>$null
+        $probe = & $candidate -lc 'export PATH=/usr/bin:/mingw64/bin:$PATH; command -v git >/dev/null && test -x /usr/bin/make.exe && command -v meson >/dev/null && command -v ninja >/dev/null && command -v pkg-config >/dev/null && (command -v nasm >/dev/null || test -x /mingw64/bin/nasm.exe)' 2>$null
         if ($LASTEXITCODE -eq 0) {
             return $candidate
         }
     }
 
-    throw "MSYS2 bash with git, make, pkg-config, and nasm was not found."
+    throw "MSYS2 bash with git, make, meson, ninja, pkg-config, and nasm was not found."
 }
 
 function Import-VsDevEnvironment {
@@ -297,11 +311,13 @@ function Copy-ComplianceFiles {
     Copy-Item $RuntimeProbeFile $Destination
     Copy-Item $LgplFile $Destination
     Copy-Item $GplFile $Destination
+    Copy-Item $Dav1dLicenseFile $Destination
 
     $destSource = Join-Path $Destination "source"
     New-Item -ItemType Directory -Force -Path $destSource | Out-Null
     Copy-Item $FfmpegSourceArchive $destSource
     Copy-Item $NvCodecHeadersSourceArchive $destSource
+    Copy-Item $Dav1dSourceArchive $destSource
 }
 
 function Convert-ToManifestPath {
@@ -425,7 +441,11 @@ function Invoke-RuntimeProbe {
     if ($avutilImportLib.Count -ne 1) {
         throw "Expected exactly one generated avutil.lib under $BuildDir; found $($avutilImportLib.Count)."
     }
-    $libDir = $avutilImportLib[0].DirectoryName
+    $avcodecImportLib = @(Get-ChildItem -Path $BuildDir -Recurse -Filter "avcodec.lib" -File)
+    if ($avcodecImportLib.Count -ne 1) {
+        throw "Expected exactly one generated avcodec.lib under $BuildDir; found $($avcodecImportLib.Count)."
+    }
+    $libDirs = @($avcodecImportLib[0].DirectoryName, $avutilImportLib[0].DirectoryName) | Select-Object -Unique
 
     New-Item -ItemType Directory -Force -Path $ProbeBuildRoot | Out-Null
     $probeExe = Join-Path $ProbeBuildRoot "ffmpeg-runtime-probe.exe"
@@ -435,8 +455,13 @@ function Invoke-RuntimeProbe {
         "/I", $IncludeDir,
         $ProbeSourceFile,
         "/Fe:$probeExe",
-        "/link",
-        "/LIBPATH:$libDir",
+        "/link"
+    )
+    foreach ($libDir in $libDirs) {
+        $compileArgs += "/LIBPATH:$libDir"
+    }
+    $compileArgs += @(
+        "avcodec.lib",
         "avutil.lib"
     )
     Invoke-Native -FilePath "cl.exe" -ArgumentList $compileArgs -WorkingDirectory $ProbeBuildRoot
@@ -463,7 +488,9 @@ function Invoke-RuntimeProbe {
         "--disable-nonfree",
         "--enable-shared",
         "--disable-static",
+        "--enable-libdav1d",
         "--enable-decoder=av1",
+        "--enable-decoder=libdav1d",
         "--enable-decoder=vp9",
         "--enable-decoder=opus",
         "--enable-demuxer=matroska",
@@ -474,6 +501,8 @@ function Invoke-RuntimeProbe {
     )) {
         Assert-ContainsProbeText -ProbeText $probeText -Pattern ([regex]::Escape($flag)) -Description "runtime configuration contains $flag"
     }
+    Assert-ContainsProbeText -ProbeText $probeText -Pattern "(?m)^decoder\.av1=present$" -Description "runtime has native av1 decoder"
+    Assert-ContainsProbeText -ProbeText $probeText -Pattern "(?m)^decoder\.libdav1d=present$" -Description "runtime has libdav1d decoder"
 }
 
 function Assert-ContainsProbeText {
@@ -496,7 +525,9 @@ function Get-ToolVersionReport {
     $gitVersion = Get-NativeOutput -FilePath "git.exe" -ArgumentList @("--version")
     $bashVersion = Get-BashOutput "bash --version | head -n 1"
     $msysVersion = Get-BashOutput "uname -a"
-    $makeVersion = Get-BashOutput "make --version | head -n 1"
+    $makeVersion = Get-BashOutput "/usr/bin/make --version | head -n 1"
+    $mesonVersion = Get-BashOutput "meson --version"
+    $ninjaVersion = Get-BashOutput "ninja --version"
     $nasmVersion = Get-BashOutput '"$NASM_EXE_MSYS" -v'
     $pkgConfigVersion = Get-BashOutput "pkg-config --version"
 
@@ -528,6 +559,12 @@ $msysVersion
 make:
 $makeVersion
 
+meson:
+$mesonVersion
+
+ninja:
+$ninjaVersion
+
 nasm:
 $nasmVersion
 
@@ -542,7 +579,7 @@ foreach ($path in @($WorkRoot, $ArtifactsRoot)) {
         Remove-Item -Recurse -Force $path
     }
 }
-foreach ($path in @($SourceRoot, $FfmpegBuildDir, $InstallRoot, $DepsRoot, $ComplianceRoot, $SourceArchiveRoot, $RuntimePackageRoot, $DevelopmentPackageRoot, $ArtifactsRoot)) {
+foreach ($path in @($SourceRoot, $FfmpegBuildDir, $Dav1dBuildDir, $InstallRoot, $DepsRoot, $Dav1dPrefix, $ComplianceRoot, $SourceArchiveRoot, $RuntimePackageRoot, $DevelopmentPackageRoot, $ArtifactsRoot)) {
     New-Item -ItemType Directory -Force -Path $path | Out-Null
 }
 
@@ -559,6 +596,13 @@ $msysClPath = (Get-BashOutput 'command -v cl.exe || true').Trim()
 Write-Host "MSYS2 cl.exe path: $msysClPath"
 if (-not $msysClPath) {
     throw "cl.exe was not found inside MSYS2 bash after importing the Visual Studio environment."
+}
+$script:MsvcToolPathMsys = (Get-BashOutput 'dirname "$(command -v cl.exe)"').Trim()
+Write-Host "MSYS2 MSVC tool directory: $script:MsvcToolPathMsys"
+$msysLinkPath = (Get-BashOutput 'command -v link.exe || true').Trim()
+Write-Host "MSYS2 link.exe path: $msysLinkPath"
+if (-not $msysLinkPath -or $msysLinkPath -eq "/usr/bin/link.exe") {
+    throw "MSVC link.exe was not selected inside MSYS2 bash after importing the Visual Studio environment."
 }
 
 Write-Step "Cloning pinned FFmpeg source"
@@ -579,35 +623,92 @@ if ($actualNvCodecHeadersCommit -ne $NvCodecHeadersCommit) {
     throw "nv-codec-headers tag $NvCodecHeadersTag resolved to $actualNvCodecHeadersCommit, expected $NvCodecHeadersCommit."
 }
 
+Write-Step "Cloning pinned dav1d source"
+Invoke-Native -FilePath "git.exe" -ArgumentList @("clone", "--branch", $Dav1dTag, "--depth", "1", $Dav1dRepository, $Dav1dSourceDir)
+$actualDav1dCommit = (Get-NativeOutput -FilePath "git.exe" -ArgumentList @("-C", $Dav1dSourceDir, "rev-parse", "HEAD")).Trim()
+if ($actualDav1dCommit -ne $Dav1dCommit) {
+    throw "dav1d tag $Dav1dTag resolved to $actualDav1dCommit, expected $Dav1dCommit."
+}
+
 $FfmpegSourceDirMsys = Convert-ToMsysPath $FfmpegSourceDir
 $NvCodecHeadersSourceDirMsys = Convert-ToMsysPath $NvCodecHeadersSourceDir
+$Dav1dSourceDirMsys = Convert-ToMsysPath $Dav1dSourceDir
 $FfmpegBuildDirMsys = Convert-ToMsysPath $FfmpegBuildDir
+$Dav1dBuildDirMsys = Convert-ToMsysPath $Dav1dBuildDir
 $InstallRootMsys = Convert-ToMsysPath $InstallRoot
 $NvCodecHeadersPrefixMsys = Convert-ToMsysPath $NvCodecHeadersPrefix
+$Dav1dPrefixMsys = Convert-ToMsysPath $Dav1dPrefix
+$Dav1dMesonNativeFileMsys = Convert-ToMsysPath $Dav1dMesonNativeFile
 $FfmpegSourceArchiveMsys = Convert-ToMsysPath $FfmpegSourceArchive
 $NvCodecHeadersSourceArchiveMsys = Convert-ToMsysPath $NvCodecHeadersSourceArchive
+$Dav1dSourceArchiveMsys = Convert-ToMsysPath $Dav1dSourceArchive
 
 $env:FFMPEG_SOURCE_DIR_MSYS = $FfmpegSourceDirMsys
 $env:NV_CODEC_HEADERS_SOURCE_DIR_MSYS = $NvCodecHeadersSourceDirMsys
+$env:DAV1D_SOURCE_DIR_MSYS = $Dav1dSourceDirMsys
 $env:FFMPEG_BUILD_DIR_MSYS = $FfmpegBuildDirMsys
+$env:DAV1D_BUILD_DIR_MSYS = $Dav1dBuildDirMsys
 $env:INSTALL_ROOT_MSYS = $InstallRootMsys
 $env:NV_CODEC_HEADERS_PREFIX_MSYS = $NvCodecHeadersPrefixMsys
+$env:DAV1D_PREFIX_MSYS = $Dav1dPrefixMsys
+$env:DAV1D_MESON_NATIVE_FILE_MSYS = $Dav1dMesonNativeFileMsys
 $env:FFMPEG_SOURCE_ARCHIVE_MSYS = $FfmpegSourceArchiveMsys
 $env:NV_CODEC_HEADERS_SOURCE_ARCHIVE_MSYS = $NvCodecHeadersSourceArchiveMsys
+$env:DAV1D_SOURCE_ARCHIVE_MSYS = $Dav1dSourceArchiveMsys
 $env:FFMPEG_COMMIT = $FfmpegCommit
 $env:NV_CODEC_HEADERS_COMMIT = $NvCodecHeadersCommit
+$env:DAV1D_COMMIT = $Dav1dCommit
 $env:FFMPEG_ARCHIVE_PREFIX = "ffmpeg-$FfmpegVersion-$FfmpegCommit/"
 $env:NV_CODEC_HEADERS_ARCHIVE_PREFIX = "nv-codec-headers-$NvCodecHeadersCommit/"
+$env:DAV1D_ARCHIVE_PREFIX = "dav1d-$Dav1dVersion-$Dav1dCommit/"
 
-$nasmExeMsys = (Get-BashOutput 'if command -v nasm >/dev/null 2>&1; then command -v nasm; elif [ -x /mingw64/bin/nasm.exe ]; then echo /mingw64/bin/nasm.exe; else echo "nasm not found" >&2; exit 1; fi').Trim()
+$nasmExeMsys = (Get-BashOutput 'if [ -x /mingw64/bin/nasm.exe ]; then echo /mingw64/bin/nasm.exe; elif command -v nasm >/dev/null 2>&1; then command -v nasm; else echo "nasm not found" >&2; exit 1; fi').Trim()
 $env:NASM_EXE_MSYS = $nasmExeMsys
+$nasmExeForMeson = (Get-BashOutput '/usr/bin/cygpath -w "$NASM_EXE_MSYS"').Trim().Replace("\", "/")
+Assert-FileExists $nasmExeForMeson
+$clExeForMeson = (Get-Command cl.exe -ErrorAction Stop).Source.Replace("\", "/")
+$libExeForMeson = (Get-Command lib.exe -ErrorAction Stop).Source.Replace("\", "/")
+
+$processorCount = 2
+if ($env:NUMBER_OF_PROCESSORS) {
+    $processorCount = [int]$env:NUMBER_OF_PROCESSORS
+}
+$parallelism = [Math]::Max(2, $processorCount)
 
 Write-Step "Creating exact corresponding source archives"
 Invoke-Bash 'cd "$FFMPEG_SOURCE_DIR_MSYS" && git archive --format=tar --prefix="$FFMPEG_ARCHIVE_PREFIX" "$FFMPEG_COMMIT" | gzip -n > "$FFMPEG_SOURCE_ARCHIVE_MSYS"'
 Invoke-Bash 'cd "$NV_CODEC_HEADERS_SOURCE_DIR_MSYS" && git archive --format=tar --prefix="$NV_CODEC_HEADERS_ARCHIVE_PREFIX" "$NV_CODEC_HEADERS_COMMIT" | gzip -n > "$NV_CODEC_HEADERS_SOURCE_ARCHIVE_MSYS"'
+Invoke-Bash 'cd "$DAV1D_SOURCE_DIR_MSYS" && git archive --format=tar --prefix="$DAV1D_ARCHIVE_PREFIX" "$DAV1D_COMMIT" | gzip -n > "$DAV1D_SOURCE_ARCHIVE_MSYS"'
 
 Write-Step "Installing nv-codec-headers into an isolated prefix"
-Invoke-Bash 'cd "$NV_CODEC_HEADERS_SOURCE_DIR_MSYS" && make PREFIX="$NV_CODEC_HEADERS_PREFIX_MSYS" install'
+Invoke-Bash 'cd "$NV_CODEC_HEADERS_SOURCE_DIR_MSYS" && /usr/bin/make PREFIX="$NV_CODEC_HEADERS_PREFIX_MSYS" install'
+
+Write-Step "Building and installing dav1d static library"
+$dav1dMesonNative = @"
+[binaries]
+c = '$clExeForMeson'
+ar = '$libExeForMeson'
+pkg-config = 'pkg-config'
+nasm = '$nasmExeForMeson'
+
+[built-in options]
+b_vscrt = 'mt'
+"@
+[System.IO.File]::WriteAllText($Dav1dMesonNativeFile, $dav1dMesonNative, [System.Text.UTF8Encoding]::new($false))
+Invoke-Bash 'meson setup "$DAV1D_BUILD_DIR_MSYS" "$DAV1D_SOURCE_DIR_MSYS" --prefix "$DAV1D_PREFIX_MSYS" --libdir lib --buildtype=release --default-library=static --native-file "$DAV1D_MESON_NATIVE_FILE_MSYS" -Denable_tools=false -Denable_examples=false -Denable_tests=false'
+Invoke-Bash "meson compile -C `"$Dav1dBuildDirMsys`" -j$parallelism"
+Invoke-Bash 'meson install -C "$DAV1D_BUILD_DIR_MSYS"'
+$dav1dStaticArchive = Join-Path $Dav1dPrefix "lib\libdav1d.a"
+$dav1dMsvcLibrary = Join-Path $Dav1dPrefix "lib\dav1d.lib"
+if (-not (Test-Path $dav1dMsvcLibrary) -and (Test-Path $dav1dStaticArchive)) {
+    Copy-Item -LiteralPath $dav1dStaticArchive -Destination $dav1dMsvcLibrary
+}
+Assert-FileExists (Join-Path $Dav1dPrefix "include\dav1d\dav1d.h")
+Assert-FileExists $dav1dMsvcLibrary
+Assert-FileExists (Join-Path $Dav1dPrefix "lib\pkgconfig\dav1d.pc")
+if (Test-Path (Join-Path $Dav1dPrefix "bin\dav1d.dll")) {
+    throw "dav1d was expected to be static, but dav1d.dll was installed."
+}
 
 $ConfigureArgs = @(
     "--prefix=$InstallRootMsys",
@@ -620,6 +721,7 @@ $ConfigureArgs = @(
     "--enable-shared",
     "--disable-static",
     "--extra-version=kawaiiengine-webmiere",
+    "--pkg-config-flags=--static",
     "--disable-programs",
     "--disable-doc",
     "--disable-network",
@@ -636,6 +738,7 @@ $ConfigureArgs = @(
     "--disable-libnpp",
     "--disable-mediafoundation",
     "--disable-nvenc",
+    "--enable-libdav1d",
     "--enable-ffnvcodec",
     "--enable-nvdec",
     "--enable-avcodec",
@@ -646,6 +749,7 @@ $ConfigureArgs = @(
     "--enable-demuxer=matroska",
     "--enable-protocol=file",
     "--enable-decoder=av1",
+    "--enable-decoder=libdav1d",
     "--enable-decoder=vp9",
     "--enable-decoder=opus",
     "--enable-parser=av1",
@@ -655,7 +759,7 @@ $ConfigureArgs = @(
     "--enable-hwaccel=vp9_nvdec"
 )
 
-$pkgConfigPathMsys = "$NvCodecHeadersPrefixMsys/lib/pkgconfig"
+$pkgConfigPathMsys = "$NvCodecHeadersPrefixMsys/lib/pkgconfig`:$Dav1dPrefixMsys/lib/pkgconfig"
 $env:PKG_CONFIG_PATH = $pkgConfigPathMsys
 $configureCommandLines = @(
     "cd $FfmpegBuildDirMsys",
@@ -693,12 +797,7 @@ if ($configureExitCode -ne 0) {
 }
 
 Write-Step "Building and installing FFmpeg shared libraries"
-$processorCount = 2
-if ($env:NUMBER_OF_PROCESSORS) {
-    $processorCount = [int]$env:NUMBER_OF_PROCESSORS
-}
-$parallelism = [Math]::Max(2, $processorCount)
-Invoke-Bash "cd `"$FfmpegBuildDirMsys`" && make -j$parallelism && make install"
+Invoke-Bash "cd `"$FfmpegBuildDirMsys`" && /usr/bin/make -j$parallelism && /usr/bin/make install"
 
 Write-Step "Generating source-change diff"
 $diffOutput = & git.exe -C $FfmpegSourceDir diff --binary $FfmpegCommit -- . 2>&1
@@ -712,6 +811,7 @@ if ($diffText.Length -ne 0) {
 }
 Copy-Item (Join-Path $FfmpegSourceDir "COPYING.LGPLv3") $LgplFile
 Copy-Item (Join-Path $FfmpegSourceDir "COPYING.GPLv3") $GplFile
+Copy-Item (Join-Path $Dav1dSourceDir "COPYING") $Dav1dLicenseFile
 
 Write-Step "Running compliance checks"
 $configHeader = Join-Path $FfmpegBuildDir "config.h"
@@ -730,6 +830,7 @@ Assert-HeaderDefine $configHeader "CONFIG_SWRESAMPLE" 1
 Assert-HeaderDefine $configHeader "CONFIG_AVDEVICE" 0
 Assert-HeaderDefine $configHeader "CONFIG_AVFILTER" 0
 Assert-HeaderDefine $configHeader "CONFIG_NETWORK" 0
+Assert-HeaderDefine $configHeader "CONFIG_LIBDAV1D" 1
 Assert-HeaderDefine $configHeader "CONFIG_NVENC" 0
 Assert-HeaderDefine $configHeader "CONFIG_CUDA_NVCC" 0
 Assert-HeaderDefine $configHeader "CONFIG_NVDEC" 1
@@ -737,6 +838,7 @@ Assert-HeaderDefine $configHeader "CONFIG_NVDEC" 1
 Assert-HeaderDefine $componentHeader "CONFIG_MATROSKA_DEMUXER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_FILE_PROTOCOL" 1
 Assert-HeaderDefine $componentHeader "CONFIG_AV1_DECODER" 1
+Assert-HeaderDefine $componentHeader "CONFIG_LIBDAV1D_DECODER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_VP9_DECODER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_OPUS_DECODER" 1
 Assert-HeaderDefine $componentHeader "CONFIG_AV1_PARSER" 1
@@ -760,12 +862,18 @@ Assert-HeaderDefine $componentHeader "CONFIG_TRANSPOSE_NPP_FILTER" 0
 Assert-HeaderDefine $componentHeader "CONFIG_YADIF_CUDA_FILTER" 0
 
 Assert-ConfigureOutput "^License:\s+$([regex]::Escape($ExpectedLicense))$" "runtime license is $ExpectedLicense"
+Assert-ConfigureOutput "\blibdav1d\b" "libdav1d is enabled"
 
 $installBin = Join-Path $InstallRoot "bin"
 $installLib = Join-Path $InstallRoot "lib"
 Assert-DirectoryExists $installBin
 foreach ($dll in $ExpectedDlls) {
     Assert-FileExists (Join-Path $installBin $dll)
+}
+$actualDlls = Get-ChildItem -Path $installBin -Filter "*.dll" -File | Select-Object -ExpandProperty Name | Sort-Object
+$expectedDllsSorted = $ExpectedDlls | Sort-Object
+if (($actualDlls -join "|") -ne ($expectedDllsSorted -join "|")) {
+    throw "Runtime DLL set mismatch. Expected $($expectedDllsSorted -join ', '); got $($actualDlls -join ', ')."
 }
 
 foreach ($program in @("ffmpeg.exe", "ffprobe.exe", "ffplay.exe")) {
@@ -788,6 +896,8 @@ $runtimeReport.Add("FFmpeg tag object: $FfmpegTagObject")
 $runtimeReport.Add("FFmpeg commit: $FfmpegCommit")
 $runtimeReport.Add("nv-codec-headers tag: $NvCodecHeadersTag")
 $runtimeReport.Add("nv-codec-headers commit: $NvCodecHeadersCommit")
+$runtimeReport.Add("dav1d tag: $Dav1dTag")
+$runtimeReport.Add("dav1d commit: $Dav1dCommit")
 $runtimeReport.Add("")
 $runtimeReport.Add("DLL dependency report")
 $runtimeReport.Add("=====================")
@@ -827,7 +937,7 @@ Build summary
 Target: Windows x64
 Runner: GitHub-hosted windows-2022
 Toolchain: Visual Studio 2022 MSVC with MSYS2 build tools
-Linkage: shared libraries only
+Linkage: FFmpeg shared libraries only; dav1d static library linked into avcodec
 Runtime license: $ExpectedLicense
 
 FFmpeg version: $FfmpegVersion
@@ -836,6 +946,9 @@ FFmpeg tag object: $FfmpegTagObject
 FFmpeg commit: $FfmpegCommit
 nv-codec-headers tag: $NvCodecHeadersTag
 nv-codec-headers commit: $NvCodecHeadersCommit
+dav1d version: $Dav1dVersion
+dav1d tag: $Dav1dTag
+dav1d commit: $Dav1dCommit
 
 Expected DLLs:
 $($ExpectedDlls -join "`n")
@@ -865,6 +978,15 @@ Repository: $NvCodecHeadersRepository
 Tag: $NvCodecHeadersTag
 Resolved commit: $NvCodecHeadersCommit
 Source archive: source/$(Split-Path $NvCodecHeadersSourceArchive -Leaf)
+
+dav1d source
+============
+
+Repository: $Dav1dRepository
+Version: $Dav1dVersion
+Tag: $Dav1dTag
+Resolved commit: $Dav1dCommit
+Source archive: source/$(Split-Path $Dav1dSourceArchive -Leaf)
 "@
 [System.IO.File]::WriteAllText($SourceInfoFile, $sourceInfo, [System.Text.UTF8Encoding]::new($false))
 
@@ -918,19 +1040,24 @@ if ($pcFiles) {
 Write-Step "Generating package SHA-256 manifests"
 $ffmpegSourceArchiveName = Split-Path $FfmpegSourceArchive -Leaf
 $nvCodecHeadersSourceArchiveName = Split-Path $NvCodecHeadersSourceArchive -Leaf
+$dav1dSourceArchiveName = Split-Path $Dav1dSourceArchive -Leaf
 $runtimeManifestFiles = @(
     ($ExpectedDlls | ForEach-Object { "bin/$_" })
     "COPYING.LGPLv3"
     "COPYING.GPLv3"
+    "COPYING.dav1d"
     "source/$ffmpegSourceArchiveName"
     "source/$nvCodecHeadersSourceArchiveName"
+    "source/$dav1dSourceArchiveName"
 )
 $developmentManifestFiles = @(
     ($ExpectedImportLibs | ForEach-Object { "lib/$_" })
     "COPYING.LGPLv3"
     "COPYING.GPLv3"
+    "COPYING.dav1d"
     "source/$ffmpegSourceArchiveName"
     "source/$nvCodecHeadersSourceArchiveName"
+    "source/$dav1dSourceArchiveName"
 )
 Write-Sha256Manifest -Root $RuntimePackageRoot -ManifestPath (Join-Path $RuntimePackageRoot "SHA256SUMS.txt") -RelativePaths ([string[]]$runtimeManifestFiles)
 Write-Sha256Manifest -Root $DevelopmentPackageRoot -ManifestPath (Join-Path $DevelopmentPackageRoot "SHA256SUMS.txt") -RelativePaths ([string[]]$developmentManifestFiles)
@@ -946,9 +1073,11 @@ $requiredComplianceFiles = @(
     "ffmpeg-runtime-probe.txt",
     "COPYING.LGPLv3",
     "COPYING.GPLv3",
+    "COPYING.dav1d",
     "SHA256SUMS.txt",
     "source\$(Split-Path $FfmpegSourceArchive -Leaf)",
-    "source\$(Split-Path $NvCodecHeadersSourceArchive -Leaf)"
+    "source\$(Split-Path $NvCodecHeadersSourceArchive -Leaf)",
+    "source\$(Split-Path $Dav1dSourceArchive -Leaf)"
 )
 foreach ($package in @($RuntimePackageRoot, $DevelopmentPackageRoot)) {
     foreach ($file in $requiredComplianceFiles) {
