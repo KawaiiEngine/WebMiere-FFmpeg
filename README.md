@@ -103,7 +103,7 @@ The records must identify the pinned FFmpeg, nv-codec-headers, and dav1d version
 
 `ffmpeg-changes.diff` is generated and must be empty. The workflow fails if the checked-out FFmpeg source differs from the pinned commit.
 
-`ffmpeg-runtime-probe.txt` is produced by a small MSVC-built probe that links the generated headers/import library and calls the freshly built FFmpeg DLLs for version, license, configuration, and required WebMiere component checks. The dav1d-enabled probe must cover the native VP9 and AV1 decoders, the libdav1d decoder, VP9/AV1 parsers, and VP9/AV1 NVDEC availability.
+`ffmpeg-runtime-probe.txt` is produced by a small MSVC-built probe that links the generated headers/import libraries and calls the freshly built FFmpeg DLLs. It records the runtime version, license, and configuration, and directly verifies the native AV1 and libdav1d decoders. The generated configure records identify the enabled VP9/AV1 decoders, parsers, and NVDEC hardware-acceleration components.
 
 Verify package checksums from the extracted package root with:
 
